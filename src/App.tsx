@@ -47,27 +47,34 @@ function Staff({ chord }: { chord: Chord }) {
   const staffRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!staffRef.current) return
-    try {
-      staffRef.current.replaceChildren()
-      const width = Math.max(staffRef.current.clientWidth, 300)
-      const renderer = new Renderer(staffRef.current, Renderer.Backends.SVG)
-      renderer.resize(width, 170)
-      const context = renderer.getContext()
-      const staveWidth = Math.min(width * 0.78, 315)
-      const staveLeft = (width - staveWidth) / 2
-      const stave = new Stave(staveLeft, 35, staveWidth)
-      stave.addClef('treble').setContext(context).draw()
-      stave.setNoteStartX(staveLeft + 70)
-      const note = new StaveNote({ keys: chordKeys(chord), duration: 'w' })
-      chordKeys(chord).forEach((key, index) => {
-        const accidental = key.match(/^[a-g](b|#)/)?.[1]
-        if (accidental) note.addModifier(new Accidental(accidental), index)
-      })
-      const voice = new Voice({ numBeats: 4, beatValue: 4 })
+    const staffElement = staffRef.current
+    const renderStaff = () => {
+      try {
+        const width = Math.max(staffElement.clientWidth, 300)
+        staffElement.replaceChildren()
+        const renderer = new Renderer(staffElement, Renderer.Backends.SVG)
+        renderer.resize(width, 210)
+        const context = renderer.getContext()
+        const staveWidth = Math.min(width * 0.88, 520)
+        const staveLeft = (width - staveWidth) / 2
+        const stave = new Stave(staveLeft, 45, staveWidth)
+        stave.addClef('treble').setContext(context).draw()
+        stave.setNoteStartX(staveLeft + 95)
+        const note = new StaveNote({ keys: chordKeys(chord), duration: 'w' })
+        chordKeys(chord).forEach((key, index) => {
+          const accidental = key.match(/^[a-g](b|#)/)?.[1]
+          if (accidental) note.addModifier(new Accidental(accidental), index)
+        })
+        const voice = new Voice({ numBeats: 4, beatValue: 4 })
         voice.addTickables([note])
-        new Formatter().joinVoices([voice]).format([voice], Math.max(staveWidth - 100, 100))
+        new Formatter().joinVoices([voice]).format([voice], Math.max(staveWidth - 130, 120))
         voice.draw(context, stave)
-    } catch (error) { console.error('VexFlow konnte den Akkord nicht zeichnen.', error) }
+      } catch (error) { console.error('VexFlow konnte den Akkord nicht zeichnen.', error) }
+    }
+    renderStaff()
+    const observer = new ResizeObserver(renderStaff)
+    observer.observe(staffElement)
+    return () => observer.disconnect()
   }, [chord])
   return <div ref={staffRef} className="staff" role="img" aria-label="Akkord im Violinschlüssel" />
 }
