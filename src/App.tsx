@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Accidental, Formatter, Renderer, Stave, StaveNote, Voice } from 'vexflow'
 import './App.css'
 
@@ -22,6 +22,14 @@ const triadKeys: Record<string, Record<'major' | 'minor', string[]>> = {
   F: { major: ['f/4', 'a/4', 'c/5'], minor: ['f/4', 'ab/4', 'c/5'] }, Fis: { major: ['f#/4', 'a#/4', 'c#/5'], minor: ['f#/4', 'a/4', 'c#/5'] }, G: { major: ['g/4', 'b/4', 'd/5'], minor: ['g/4', 'bb/4', 'd/5'] }, As: { major: ['ab/4', 'c/5', 'eb/5'], minor: ['ab/4', 'cb/5', 'eb/5'] }, A: { major: ['a/4', 'c#/5', 'e/5'], minor: ['a/4', 'c/5', 'e/5'] }, B: { major: ['bb/4', 'd/5', 'f/5'], minor: ['bb/4', 'db/5', 'f/5'] }, H: { major: ['b/4', 'd#/5', 'f#/5'], minor: ['b/4', 'd/5', 'f#/5'] },
 }
 
+const enharmonicDiminishedAugmentedKeys: Record<string, string[]> = {
+  'Des:dim': ['c#/4', 'e/4', 'g/4'],
+  'Es:dim': ['d#/4', 'f#/4', 'a/4'],
+  'As:dim': ['g#/4', 'b/4', 'd/5'],
+  'Fis:aug': ['gb/4', 'bb/4', 'd/5'],
+  'H:aug': ['cb/4', 'eb/4', 'g/4'],
+}
+
 function rootName(root: string, language: Language) { return language === 'de' ? germanRootNames[root] : internationalRootNames[root] }
 function chordName(chord: Chord, language: Language) {
   const suffix: Record<ChordType, string> = language === 'de' ? { major: '', minor: '', dim: '°', aug: '+', maj7: 'maj7', min7: 'm7', dom7: '7', dim7: '°7', halfDim7: 'ø7', add9: 'add9', minorAdd9: 'madd9', six: '6', minorSix: 'm6' } : { major: '', minor: 'm', dim: 'dim', aug: 'aug', maj7: 'maj7', min7: 'm7', dom7: '7', dim7: 'dim7', halfDim7: 'm7b5', add9: 'add9', minorAdd9: 'madd9', six: '6', minorSix: 'm6' }
@@ -35,10 +43,25 @@ function chordName(chord: Chord, language: Language) {
 }
 function inversionLabel(chord: Chord, inversion: Inversion, language: Language) { const rootNameValue = rootName(chord.root, language); const root = language === 'de' && chord.type === 'minor' ? rootNameValue.toLowerCase() : language === 'intl' && chord.type === 'minor' ? `${rootNameValue}m` : rootNameValue; const labels = ['Grundstellung', '1. Umkehrung (Sextakkord)', '2. Umkehrung (Quartsextakkord)']; return `${root} - ${labels[inversion]}` }
 function basicChordAt(index: number): Chord { const root = roots[Math.floor(index / 2) % roots.length]; const type: ChordType = index % 2 === 0 ? 'major' : 'minor'; return { root, type, inversion: 0, intervals: labels[type].intervals } }
+function diminishedAugmentedChordAt(index: number): Chord { const root = roots[Math.floor(index / 2) % roots.length]; const type: ChordType = index % 2 === 0 ? 'dim' : 'aug'; return { root, type, inversion: 0, intervals: labels[type].intervals } }
 function shuffledIndices() { const indices = Array.from({ length: 24 }, (_, index) => index); for (let index = indices.length - 1; index > 0; index -= 1) { const swapIndex = Math.floor(Math.random() * (index + 1)); [indices[index], indices[swapIndex]] = [indices[swapIndex], indices[index]] } return indices }
 function chooseInversion(inversions: Inversion[], previous?: Inversion) { const choices = inversions.filter((inversion) => inversion !== previous); const available = choices.length > 0 ? choices : inversions; return available[Math.floor(Math.random() * available.length)] }
+function alterKeyAccidental(key: string, semitoneDelta: number) {
+  const [noteName, octave] = key.split('/')
+  const match = /^([a-g])([b#]*)$/.exec(noteName)
+  if (!match || !octave) return key
+  const currentAccidental = (match[2].match(/#/g)?.length ?? 0) - (match[2].match(/b/g)?.length ?? 0)
+  const accidentalValue = currentAccidental + semitoneDelta
+  const accidental = accidentalValue < 0 ? 'b'.repeat(-accidentalValue) : '#'.repeat(accidentalValue)
+  return `${match[1]}${accidental}/${octave}`
+}
 function chordKeys(chord: Chord) {
-  const base = triadKeys[chord.root][chord.type === 'minor' ? 'minor' : 'major']
+  const enharmonicKeys = enharmonicDiminishedAugmentedKeys[`${chord.root}:${chord.type}`]
+  if (enharmonicKeys) return enharmonicKeys
+  const base = triadKeys[chord.root][chord.type === 'minor' || chord.type === 'dim' ? 'minor' : 'major']
+  if (chord.type === 'dim' || chord.type === 'aug') {
+    return [base[0], base[1], alterKeyAccidental(base[2], chord.type === 'dim' ? -1 : 1)]
+  }
   const rotated = [...base.slice(chord.inversion), ...base.slice(0, chord.inversion)]
   return rotated.map((key, index) => index >= base.length - chord.inversion ? `${key.split('/')[0]}/${Number(key.split('/')[1]) + 1}` : key)
 }
@@ -62,7 +85,7 @@ function Staff({ chord }: { chord: Chord }) {
         stave.setNoteStartX(staveLeft + 95)
         const note = new StaveNote({ keys: chordKeys(chord), duration: 'w' })
         chordKeys(chord).forEach((key, index) => {
-          const accidental = key.match(/^[a-g](b|#)/)?.[1]
+          const accidental = key.match(/^[a-g]([b#]+)/)?.[1]
           if (accidental) note.addModifier(new Accidental(accidental), index)
         })
         const voice = new Voice({ numBeats: 4, beatValue: 4 })
@@ -79,8 +102,111 @@ function Staff({ chord }: { chord: Chord }) {
   return <div ref={staffRef} className="staff" role="img" aria-label="Akkord im Violinschlüssel" />
 }
 
+function DiminishedAugmentedTraining({ header, language }: { header: ReactNode; language: Language }) {
+  const [chord, setChord] = useState<Chord>(() => diminishedAugmentedChordAt(Math.floor(Math.random() * 24)))
+  const [feedback, setFeedback] = useState<'correct' | 'wrong' | null>(null)
+  const [score, setScore] = useState({ correct: 0, wrong: 0 })
+  const questionBag = useRef<number[]>([])
+  const transitionTimer = useRef<number | null>(null)
+  const options = useMemo(() => (['dim', 'aug'] as const).map((type) => ({
+    type,
+    label: language === 'de'
+      ? `${labels[type].de[0].toUpperCase()}${labels[type].de.slice(1)}`
+      : labels[type].intl,
+  })), [language])
+
+  useEffect(() => () => {
+    if (transitionTimer.current !== null) window.clearTimeout(transitionTimer.current)
+  }, [])
+
+  function nextQuestion() {
+    if (transitionTimer.current !== null) window.clearTimeout(transitionTimer.current)
+    if (questionBag.current.length === 0) {
+      questionBag.current = shuffledIndices()
+      const currentIndex = roots.indexOf(chord.root) * 2 + (chord.type === 'aug' ? 1 : 0)
+      if (questionBag.current[0] === currentIndex) [questionBag.current[0], questionBag.current[1]] = [questionBag.current[1], questionBag.current[0]]
+    }
+    setChord(diminishedAugmentedChordAt(questionBag.current.shift() ?? 0))
+    setFeedback(null)
+  }
+
+  function answer(value: 'dim' | 'aug') {
+    if (feedback !== null) return
+    const correct = value === chord.type
+    setFeedback(correct ? 'correct' : 'wrong')
+    setScore((current) => ({ correct: current.correct + Number(correct), wrong: current.wrong + Number(!correct) }))
+    transitionTimer.current = window.setTimeout(nextQuestion, correct ? 500 : 2000)
+  }
+
+  const total = score.correct + score.wrong
+
+  return (
+    <main className="app-shell">
+      {header}
+      <section className="content-grid">
+        <div className="main-column">
+          <div className="eyebrow"><span className="live-dot" /> VERMINDERT & ÜBERMÄSSIG <span className="eyebrow-line" /></div>
+          <div className="title-row">
+            <div>
+              <h1>Welcher Akkord<br /><em>ist das?</em></h1>
+              <p className="intro">Erkenne verminderte und übermäßige Dreiklänge in Grundstellung.</p>
+            </div>
+            <div className="score-card">
+              <span>DEINE ÜBUNG</span>
+              <strong>{score.correct}<i> / </i>{total}</strong>
+              <small>richtig beantwortet</small>
+            </div>
+          </div>
+          <div className="practice-panel">
+            <div className="panel-label">VIOLINSCHLÜSSEL <span>GRUNDSTELLUNG</span></div>
+            <Staff chord={chord} />
+          </div>
+          <div className="answer-area">
+            <div className="question-label">WÄHLE DEN AKKORDTYP</div>
+            <div className="answer-grid chord-grid">
+              {options.map((option) => (
+                <button
+                  key={option.type}
+                  className={`answer-button ${feedback && option.type === chord.type ? 'answer-correct' : ''}`}
+                  onClick={() => answer(option.type)}
+                  disabled={Boolean(feedback)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            {feedback && (
+              <div className={`feedback ${feedback}`}>
+                <span>{feedback === 'correct' ? '✓' : '!'}</span>
+                <div>
+                  <strong>{feedback === 'correct' ? 'Richtig!' : 'Das war nicht richtig.'}</strong>
+                  <small>Die Lösung lautet {options.find((option) => option.type === chord.type)?.label}.</small>
+                </div>
+                <button onClick={nextQuestion}>Nächster Akkord →</button>
+              </div>
+            )}
+          </div>
+        </div>
+        <aside className="score-aside" aria-label="Übungsstand">
+          <span className="aside-label">BISHER</span>
+          <div className="score-line"><span>Richtig</span><strong>{score.correct}</strong></div>
+          <div className="score-line"><span>Falsch</span><strong>{score.wrong}</strong></div>
+          <div className="score-total">{total === 1 ? '1 Akkord' : `${total} Akkorde`}</div>
+          <div className="score-rule" />
+          <p>Alle Aufgaben erscheinen in Grundstellung.</p>
+        </aside>
+      </section>
+      <footer>
+        <span>SESSION SCORE</span>
+        <span><b>{score.correct}</b> richtig <b>{score.wrong}</b> falsch</span>
+        <span className="footer-note">Fortschritt wird nur für diese Übung gezählt.</span>
+      </footer>
+    </main>
+  )
+}
+
 function App() {
-  const [screen, setScreen] = useState<'home' | 'training'>('home')
+  const [screen, setScreen] = useState<'home' | 'training' | 'diminishedAugmented'>('home')
   const [mode, setMode] = useState<AppMode>('basic')
   const [language, setLanguage] = useState<Language>('de')
   const [step, setStep] = useState<Step>('root')
@@ -115,7 +241,9 @@ function App() {
   async function playChord() { if (!soundEnabled) return; const audio = getAudioContext(); await audio.resume(); const now = audio.currentTime; chord.intervals.forEach((interval, index) => { const oscillator = audio.createOscillator(); const gain = audio.createGain(); oscillator.type = 'sine'; oscillator.frequency.value = 261.63 * Math.pow(2, (interval + chord.inversion * 12) / 12); gain.gain.setValueAtTime(0.12, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2); oscillator.connect(gain).connect(audio.destination); oscillator.start(now + index * 0.04); oscillator.stop(now + 1.2) }) }
   const header = (back = false) => <header className="topbar"><div className="brand">{back && <button className="back-button" onClick={() => setScreen('home')} aria-label="Zur Startseite">←</button>}<span className="brand-mark">♫</span><span>akkorde<span className="brand-accent">.</span></span></div><div className="top-actions"><div className="language-switch" role="group" aria-label="Notation"><button className={language === 'de' ? 'active' : ''} onClick={() => setLanguage('de')}>Deutsch</button><button className={language === 'intl' ? 'active' : ''} onClick={() => setLanguage('intl')}>International</button></div>{back && <button className="icon-button" onClick={() => setShowSettings(!showSettings)} aria-label="Einstellungen">☷</button>}</div></header>
 
-  if (screen === 'home') return <main className="app-shell">{header()}<section className="home-content"><div className="eyebrow"><span className="live-dot" /> AKKORDTRAINER</div><h1>Was möchtest du<br /><em>üben?</em></h1><p className="home-intro">Wähle eine Übung und trainiere Dur- und Mollakkorde in Grundstellung oder Umkehrungen.</p><div className="app-cards"><button className="app-card" onClick={() => { setMode('basic'); basicBag.current = []; setChord(basicChordAt(0)); setStep('chord'); setScore({ correct: 0, wrong: 0 }); setScreen('training') }}><span className="card-number">01</span><span className="card-symbol">C</span><span className="card-copy"><strong>Welcher Akkord ist das?</strong><small>Dur und Moll in Grundstellung</small></span><span className="card-arrow">→</span></button><button className="app-card" onClick={() => { setMode('inversions'); inversionBag.current = []; setChord({ ...basicChordAt(Math.floor(Math.random() * 24)), inversion: selectedInversions[0] }); setStep('root'); setScore({ correct: 0, wrong: 0 }); setScreen('training') }}><span className="card-number">02</span><span className="card-symbol">C <br /><i>/ E</i></span><span className="card-copy"><strong>Welcher Akkord ist das?</strong><small>Dur und Moll mit Umkehrungen</small></span><span className="card-arrow">→</span></button></div></section><footer><span>2 ANWENDUNGEN</span><span className="footer-note">Weitere Akkordarten folgen später.</span></footer></main>
+  if (screen === 'home') return <main className="app-shell">{header()}<section className="home-content"><div className="eyebrow"><span className="live-dot" /> AKKORDTRAINER</div><h1>Was möchtest du<br /><em>üben?</em></h1><p className="home-intro">Wähle eine Übung und trainiere Dur- und Mollakkorde in Grundstellung oder Umkehrungen.</p><div className="app-cards"><button className="app-card" onClick={() => { setMode('basic'); basicBag.current = []; setChord(basicChordAt(0)); setStep('chord'); setScore({ correct: 0, wrong: 0 }); setScreen('training') }}><span className="card-number">01</span><span className="card-symbol">C</span><span className="card-copy"><strong>Welcher Akkord ist das?</strong><small>Dur und Moll in Grundstellung</small></span><span className="card-arrow">→</span></button><button className="app-card" onClick={() => { setMode('inversions'); inversionBag.current = []; setChord({ ...basicChordAt(Math.floor(Math.random() * 24)), inversion: selectedInversions[0] }); setStep('root'); setScore({ correct: 0, wrong: 0 }); setScreen('training') }}><span className="card-number">02</span><span className="card-symbol">C <br /><i>/ E</i></span><span className="card-copy"><strong>Welcher Akkord ist das?</strong><small>Dur und Moll mit Umkehrungen</small></span><span className="card-arrow">→</span></button><button className="app-card" onClick={() => { setScore({ correct: 0, wrong: 0 }); setScreen('diminishedAugmented') }}><span className="card-number">03</span><span className="card-symbol">°+</span><span className="card-copy"><strong>Welcher Akkord ist das?</strong><small>Verminderte und übermäßige Akkorde in Grundstellung</small></span><span className="card-arrow">→</span></button></div></section><footer><span>3 ANWENDUNGEN</span><span className="footer-note">Weitere Akkordarten folgen später.</span></footer></main>
+
+  if (screen === 'diminishedAugmented') return <DiminishedAugmentedTraining header={header(true)} language={language} />
 
   const isRootStep = mode === 'inversions' && step === 'root'
   return <main className="app-shell">{header(true)}<section className="content-grid"><div className="main-column"><div className="eyebrow"><span className="live-dot" /> {mode === 'basic' ? 'GRUNDSTELLUNG' : 'UMKEHRUNGEN'} <span className="eyebrow-line" /></div><div className="title-row"><div><h1>Welcher Akkord<br /><em>ist das?</em></h1><p className="intro">{mode === 'basic' ? 'Klicke den passenden Dur- oder Mollakkord an.' : 'Erkenne erst den Grundton, dann die Qualität und Lage.'}</p></div><div className="score-card"><span>DEINE ÜBUNG</span><strong>{score.correct}<i> / </i>{score.correct + score.wrong}</strong><small>richtig beantwortet</small></div></div>{mode === 'inversions' && <div className="progress-row"><span className={step === 'root' ? 'current' : 'done'}>01 <b>Grundton</b></span><span className={step === 'chord' ? 'current' : ''}>02 <b>Akkord</b></span><div className="progress-track"><i style={{ width: step === 'root' ? '50%' : '100%' }} /></div></div>}<div className="practice-panel"><div className="panel-label">VIOLINSCHLÜSSEL <span>{mode === 'basic' ? 'AKKORD ERKENNEN' : isRootStep ? 'SCHRITT 1 VON 2' : 'SCHRITT 2 VON 2'}</span></div><Staff chord={chord} /><div className="listen-row"><button className={`listen-button ${soundEnabled ? 'enabled' : ''}`} onClick={playChord} aria-label="Akkord abspielen">▶</button><span>{soundEnabled ? 'Akkord anhören' : 'Klang ist ausgeschaltet'}</span><button className="sound-toggle" onClick={toggleSound} aria-label="Klang ein- oder ausschalten"><span className={soundEnabled ? 'toggle-on' : ''} /></button></div></div><div className="answer-area"><div className="question-label">{isRootStep ? 'WÄHLE DEN GRUNDTON' : 'WÄHLE DEN VOLLSTÄNDIGEN AKKORD'}</div><div className={`answer-grid ${isRootStep ? '' : 'chord-grid'}`}>{(isRootStep ? rootOptions : chordOptions).map((option) => <button key={option} className={`answer-button ${feedback && ((isRootStep && option === rootName(chord.root, language)) || (!isRootStep && option === chordName(chord, language))) ? 'answer-correct' : ''}`} onClick={() => answer(option)} disabled={Boolean(feedback)}>{option}</button>)}</div>{feedback && <div className={`feedback ${feedback}`}><span>{feedback === 'correct' ? '✓' : '!'}</span><div><strong>{feedback === 'correct' ? 'Richtig!' : 'Das war nicht richtig.'}</strong><small>{isRootStep ? `Der Grundton ist ${rootName(chord.root, language)}.` : `Die Lösung lautet ${chordName(chord, language)}.`}</small></div><button onClick={nextStep}>{isRootStep ? 'Zum Akkord →' : 'Nächste Aufgabe →'}</button></div>}</div></div>{showSettings && mode === 'inversions' && <aside className="settings-panel"><div className="settings-heading"><span>TRAINING</span><button onClick={() => setShowSettings(false)} aria-label="Einstellungen schließen">×</button></div><h2>Deine Auswahl</h2><p className="settings-copy">Dur und Moll mit den gewählten Umkehrungen.</p><div className="setting-section"><label>Umkehrungen</label>{(['Grundstellung', '1. Umkehrung', '2. Umkehrung'] as const).map((name, index) => <label className="check-row" key={name}><input type="checkbox" checked={selectedInversions.includes(index as Inversion)} onChange={() => toggleInversion(index as Inversion)} /><span>{name}</span></label>)}</div><button className="reset-button" onClick={() => setSelectedInversions([0, 1, 2])}>Alle Umkehrungen</button></aside>}</section><footer><span>SESSION SCORE</span><span><b>{score.correct}</b> richtig <b>{score.wrong}</b> falsch</span><span className="footer-note">Fortschritt wird nur für diese Übung gezählt.</span></footer></main>
