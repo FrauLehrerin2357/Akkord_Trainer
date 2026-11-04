@@ -46,7 +46,13 @@ function chordName(chord: Chord, language: Language) {
 }
 function inversionLabel(chord: Chord, inversion: Inversion, language: Language) { const rootNameValue = rootName(chord.root, language); const root = language === 'de' && chord.type === 'minor' ? rootNameValue.toLowerCase() : language === 'intl' && chord.type === 'minor' ? `${rootNameValue}m` : rootNameValue; const labels = ['Grundstellung', '1. Umkehrung (Sextakkord)', '2. Umkehrung (Quartsextakkord)']; return `${root} - ${labels[inversion]}` }
 function basicChordAt(index: number): Chord { const root = roots[Math.floor(index / 2) % roots.length]; const type: ChordType = index % 2 === 0 ? 'major' : 'minor'; return { root, type, inversion: 0, intervals: labels[type].intervals } }
-function triadQualityChordAt(index: number): TriadQualityChord { const root = roots[Math.floor(index / triadQualities.length) % roots.length]; const type = triadQualities[index % triadQualities.length]; return { root, type, inversion: 0, intervals: labels[type].intervals } }
+function triadQualityChordAt(index: number, includeInversions = false): TriadQualityChord {
+  const inversionCount = includeInversions ? 3 : 1
+  const qualityIndex = Math.floor(index / inversionCount)
+  const root = roots[Math.floor(qualityIndex / triadQualities.length) % roots.length]
+  const type = triadQualities[qualityIndex % triadQualities.length]
+  return { root, type, inversion: (index % inversionCount) as Inversion, intervals: labels[type].intervals }
+}
 function shuffledIndices(count = 24) { const indices = Array.from({ length: count }, (_, index) => index); for (let index = indices.length - 1; index > 0; index -= 1) { const swapIndex = Math.floor(Math.random() * (index + 1)); [indices[index], indices[swapIndex]] = [indices[swapIndex], indices[index]] } return indices }
 function chooseInversion(inversions: Inversion[], previous?: Inversion) { const choices = inversions.filter((inversion) => inversion !== previous); const available = choices.length > 0 ? choices : inversions; return available[Math.floor(Math.random() * available.length)] }
 function alterKeyAccidental(key: string, semitoneDelta: number) {
@@ -63,13 +69,16 @@ function advancedTriadKeys(chord: Chord) {
   const naturalSemitones: Record<string, number> = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 }
   const [rootName] = triadKeys[chord.root].major[0].split('/')
   const rootMatch = /^([a-g])([b#]*)$/.exec(rootName)
-  if (!rootMatch) return triadKeys[chord.root][chord.type === 'minor' || chord.type === 'dim' ? 'minor' : 'major']
+  if (!rootMatch) {
+    const base = triadKeys[chord.root][chord.type === 'minor' || chord.type === 'dim' ? 'minor' : 'major']
+    return [...base.slice(chord.inversion), ...base.slice(0, chord.inversion)].map((key, index) => index >= base.length - chord.inversion ? `${key.split('/')[0]}/${Number(key.split('/')[1]) + 1}` : key)
+  }
 
   const rootLetterIndex = letterNames.indexOf(rootMatch[1])
   const rootAccidental = (rootMatch[2].match(/#/g)?.length ?? 0) - (rootMatch[2].match(/b/g)?.length ?? 0)
   const rootSemitone = (naturalSemitones[rootMatch[1]] + rootAccidental + 12) % 12
 
-  return [0, 2, 4].map((letterStep, index) => {
+  const base = [0, 2, 4].map((letterStep, index) => {
     const noteIndex = rootLetterIndex + letterStep
     const letter = letterNames[noteIndex % letterNames.length]
     const octave = 4 + Math.floor(noteIndex / letterNames.length)
@@ -79,6 +88,7 @@ function advancedTriadKeys(chord: Chord) {
     const accidental = accidentalValue < 0 ? 'b'.repeat(-accidentalValue) : '#'.repeat(accidentalValue)
     return `${letter}${accidental}/${octave}`
   })
+  return [...base.slice(chord.inversion), ...base.slice(0, chord.inversion)].map((key, index) => index >= base.length - chord.inversion ? `${key.split('/')[0]}/${Number(key.split('/')[1]) + 1}` : key)
 }
 function chordKeys(chord: Chord, advanced = false) {
   if (advanced) return advancedTriadKeys(chord)
@@ -134,6 +144,7 @@ function TriadQualityTraining({ header, language }: { header: ReactNode; languag
   const [feedback, setFeedback] = useState<'correct' | 'wrong' | null>(null)
   const [score, setScore] = useState({ correct: 0, wrong: 0 })
   const [advancedMode, setAdvancedMode] = useState(false)
+  const [proMode, setProMode] = useState(false)
   const questionBag = useRef<number[]>([])
   const transitionTimer = useRef<number | null>(null)
   const options = useMemo(() => triadQualities.map((type) => ({
@@ -150,12 +161,22 @@ function TriadQualityTraining({ header, language }: { header: ReactNode; languag
   function nextQuestion() {
     if (transitionTimer.current !== null) window.clearTimeout(transitionTimer.current)
     if (questionBag.current.length === 0) {
-      questionBag.current = shuffledIndices(roots.length * triadQualities.length)
-      const currentIndex = roots.indexOf(chord.root) * triadQualities.length + triadQualities.indexOf(chord.type)
+      const inversionCount = proMode ? 3 : 1
+      questionBag.current = shuffledIndices(roots.length * triadQualities.length * inversionCount)
+      const currentIndex = (roots.indexOf(chord.root) * triadQualities.length + triadQualities.indexOf(chord.type)) * inversionCount + chord.inversion
       if (questionBag.current[0] === currentIndex) [questionBag.current[0], questionBag.current[1]] = [questionBag.current[1], questionBag.current[0]]
     }
-    setChord(triadQualityChordAt(questionBag.current.shift() ?? 0))
+    setChord(triadQualityChordAt(questionBag.current.shift() ?? 0, proMode))
     setFeedback(null)
+  }
+
+  function toggleProMode(enabled: boolean) {
+    if (transitionTimer.current !== null) window.clearTimeout(transitionTimer.current)
+    transitionTimer.current = null
+    questionBag.current = []
+    setFeedback(null)
+    setProMode(enabled)
+    setChord(triadQualityChordAt(Math.floor(Math.random() * roots.length * triadQualities.length * (enabled ? 3 : 1)), enabled))
   }
 
   function answer(value: TriadQuality) {
@@ -177,11 +198,16 @@ function TriadQualityTraining({ header, language }: { header: ReactNode; languag
           <div className="title-row">
             <div>
               <h1>Welcher Akkord<br /><em>ist das?</em></h1>
-              <p className="intro">Erkenne Dur-, Moll-, verminderte und übermäßige Dreiklänge in Grundstellung.</p>
+              <p className="intro">Erkenne Dur-, Moll-, verminderte und übermäßige Dreiklänge{proMode ? ' in Grundstellung und Umkehrungen.' : ' in Grundstellung.'}</p>
               <label className="advanced-mode-toggle">
                 <input type="checkbox" checked={advancedMode} onChange={(event) => setAdvancedMode(event.target.checked)} />
                 <span className="advanced-mode-switch" />
                 <span className="advanced-mode-copy"><strong>Fortgeschritten-Modus</strong><small>Mit Doppel-b und Doppelkreuz</small></span>
+              </label>
+              <label className="advanced-mode-toggle">
+                <input type="checkbox" checked={proMode} onChange={(event) => toggleProMode(event.target.checked)} />
+                <span className="advanced-mode-switch" />
+                <span className="advanced-mode-copy"><strong>Profi-Modus</strong><small>Umkehrungen und Doppelvorzeichen</small></span>
               </label>
             </div>
             <div className="score-card">
@@ -191,8 +217,8 @@ function TriadQualityTraining({ header, language }: { header: ReactNode; languag
             </div>
           </div>
           <div className="practice-panel">
-            <div className="panel-label">VIOLINSCHLÜSSEL <span>GRUNDSTELLUNG</span></div>
-            <Staff chord={chord} advanced={advancedMode} />
+            <div className="panel-label">VIOLINSCHLÜSSEL <span>{(['GRUNDSTELLUNG', '1. UMKEHRUNG', '2. UMKEHRUNG'] as const)[chord.inversion]}</span></div>
+            <Staff chord={chord} advanced={advancedMode || proMode} />
           </div>
           <div className="answer-area">
             <div className="question-label">WÄHLE DEN AKKORDTYP</div>
